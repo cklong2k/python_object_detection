@@ -36,7 +36,7 @@ def yolov8_object_detection(image):
     """
     try:
         # 執行推論
-        results = model(image, conf=0.3, iou=0.5)  # conf: 信心度閾值, iou: NMS閾值
+        results = model(image, conf=0.3, iou=0.5, verbose=False, augment=False, agnostic_nms=False, retina_masks=False, classes=None, device='cpu')  # conf: 信心度閾值, iou: NMS閾值
         
         detected_objects = []
         
@@ -72,6 +72,25 @@ def yolov8_object_detection(image):
     except Exception as e:
         print(f"YOLOv8 推論錯誤: {str(e)}")
         return []
+
+# 轉成 1024維向量資料
+def base64_to_vector(base64_image):
+    try:
+        # 解碼 Base64 圖像，並轉成 1024維向量資料
+        img_data = base64.b64decode(base64_image)
+        np_arr = np.frombuffer(img_data, np.uint8)
+        image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return None
+        
+        # 將圖像轉換為 1024維向量資料
+        vector = image.flatten()
+        return vector.tolist()
+        
+    except Exception as e:
+        print(f"轉換錯誤: {str(e)}")
+        return None
 
 @app.route('/')
 def index():
@@ -123,13 +142,34 @@ def handle_image(data):
         # 執行 YOLOv8 物件識別
         results = yolov8_object_detection(image)
 
-        # draw bounding boxes
-        for result in results:
+        # crop bounding boxes
+        for index, result in enumerate(results):
             x, y, w, h = result["bbox"]
+
+            # 擷取時間戳與保存圖片
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            image_path = f"static/images/{timestamp}_{index}.jpg"
+
+            # 裁切並儲存目標區塊
+            canvas = image[y:y+h, x:x+w].copy()
+            cv2.imwrite(image_path, canvas)
+        # draw bounding boxes
+        for index, result in enumerate(results):
+            x, y, w, h = result["bbox"]
+
+            # 擷取時間戳與保存圖片
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            image_path = f"static/images/{timestamp}_{index}.jpg"
+
+            label = result["label"]
+
+            # 繪製框線與標籤
             cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.putText(image, result["label"], (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+            cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        
 
         # save image
+        image_path = f"static/images/{timestamp}_bounding.jpg"
         cv2.imwrite(image_path, image)
         
         print(f"🔍 檢測到 {len(results)} 個物件")
@@ -145,6 +185,59 @@ def handle_image(data):
         print(f"處理影像時發生錯誤: {str(e)}")
         emit('error', {'error': f'伺服器錯誤：{str(e)}'})
 
+@socketio.on('createVector')
+def handle_create_vector(data):
+    try:
+        # 檢查資料格式 data base64/image
+        if not isinstance(data, dict):
+            emit('error', {'error': '資料格式錯誤'})
+            return
+            
+        b64_image = data.get('image_base64')
+        if not b64_image:
+            emit('error', {'error': '未收到影像資料'})
+            return
+
+        # base64 解碼，添加錯誤處理
+        try:
+            img_data = base64.b64decode(b64_image)
+        except Exception as decode_error:
+            emit('error', {'error': f'Base64 解碼失敗: {str(decode_error)}'})
+            return
+            
+        np_arr = np.frombuffer(img_data, np.uint8)
+        image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            emit('error', {'error': '影像無法解碼，請檢查影像格式'})
+            return
+
+        print(f"收到影像，尺寸: {image.shape}")
+
+        # save image
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        image_path = f"static/images/{timestamp}.jpg"
+        cv2.imwrite(image_path, image)
+
+        # convert base64image to vector
+        vector = base64_to_vector(b64_image)
+
+        if vector is None:
+            emit('error', {'error': '影像轉換為向量時發生錯誤'})
+            return
+
+        print(f"影像轉換為向量成功，向量長度: {len(vector)}")
+
+        # 回傳結果給前端
+        emit('result', {
+            'status': 'success',
+            'vector': vector
+        })
+
+    except Exception as e:
+        print(f"處理影像時發生錯誤: {str(e)}")
+        emit('error', {'error': f'伺服器錯誤：{str(e)}'})
+        
 @socketio.on_error_default
 def default_error_handler(e):
     print(f"SocketIO 錯誤: {str(e)}")

@@ -166,6 +166,8 @@
         📸 拍照並辨識
       </button>
       <button onclick="toggleCamera()">🔄 切換相機</button>
+      <button onclick="createVector()">建立Vector</button>
+      <button onclick="identifyVector()">識別Vector</button>
       <button onclick="dummyImage()">Dummy Image</button>
     </div>
     
@@ -212,6 +214,12 @@
       
       socket.on('result', data => {
         console.log("收到辨識結果:", data);
+        displayResults(data);
+        setProcessing(false);
+      });
+
+      socket.on('vector', data => {
+        console.log("收到Vector:", data);
         displayResults(data);
         setProcessing(false);
       });
@@ -263,8 +271,9 @@
         const constraints = {
           video: {
             facingMode: facingMode,
-            width: { ideal: 224 },
-            height: { ideal: 224 }
+            width: { ideal: 480 },
+            height: { ideal: 640 },
+            frameRate: { ideal: 30, max: 30 }
           }
         };
         
@@ -296,8 +305,8 @@
     function dummyImage() {
       const video = document.getElementById('video');
       const canvas = document.getElementById('canvas');
-      canvas.width = 224;
-      canvas.height = 224;
+      canvas.width = 640;
+      canvas.height = 480;
       const context = canvas.getContext('2d');
       const img = new Image();
       img.src = '/static/images/dummy.jpg';
@@ -390,6 +399,11 @@
     // 顯示辨識結果
     function displayResults(data) {
       const resultEl = document.getElementById('result');
+
+      if (data.vector) {
+        resultEl.innerHTML = `📊 Vector: ${data.vector}`;
+        return;
+      }
       
       if (!data.objects || data.objects.length === 0) {
         resultEl.innerHTML = "🤷‍♂️ 未檢測到任何物件";
@@ -422,6 +436,59 @@
       resultEl.innerHTML = html;
     }
     
+    function createVector() {
+      try {
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        
+        if (!video || !canvas) {
+          showStatus("❌ 頁面元素載入錯誤", 'error');
+          return;
+        }
+        
+        const context = canvas.getContext('2d');
+        
+        // 檢查影片是否準備好
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          showStatus("❌ 相機尚未準備好，請稍候再試", 'error');
+          return;
+        } else {
+          
+        }
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // 轉換為 base64，降低品質以加快傳輸
+        const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+        if (!base64Data) {
+          showStatus("❌ 無法擷取影像", 'error');
+          return;
+        }
+
+        // ✅ base64Data 可送出或處理
+        console.log(base64Data);
+        setProcessing(true);
+        document.getElementById('result').textContent = "🔄 正在分析影像...";
+        
+        // 檢查 socket 連線狀態
+        if (!socket || !socket.connected) {
+          showStatus("❌ 與伺服器連線中斷，請重新整理頁面", 'error');
+          setProcessing(false);
+          return;
+        }
+        
+        // 傳送影像到伺服器
+        socket.emit('createVector', { image_base64: base64Data });
+      } catch (err) {
+        console.error("拍照失敗:", err);
+        showStatus(`❌ 拍照失敗: ${err.message || '未知錯誤'}`, 'error');
+        setProcessing(false);
+      }
+    }
+
     // 頁面載入完成後初始化
     window.addEventListener('DOMContentLoaded', () => {
       initSocket();
