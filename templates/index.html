@@ -110,7 +110,6 @@
       border-radius: 5px;
       padding: 15px;
       font-family: 'Courier New', monospace;
-      white-space: pre-wrap;
       max-height: 300px;
       overflow-y: auto;
     }
@@ -122,6 +121,8 @@
       padding: 10px;
       margin: 10px 0;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      width: 40%;
+      display: inline-block;
     }
     
     .object-label {
@@ -154,8 +155,6 @@
 </head>
 <body>
   <div class="container">
-    <h2>📷 即時物件辨識</h2>
-    
     <div id="status" class="status" style="display: none;"></div>
     
     <div class="video-container">
@@ -167,12 +166,12 @@
         📸 拍照並辨識
       </button>
       <button onclick="toggleCamera()">🔄 切換相機</button>
+      <button onclick="dummyImage()">Dummy Image</button>
     </div>
     
     <canvas id="canvas"></canvas>
     
     <div class="result-container">
-      <div class="result-title">🔍 辨識結果</div>
       <div id="result" class="result-content">等待辨識結果...</div>
     </div>
   </div>
@@ -264,8 +263,8 @@
         const constraints = {
           video: {
             facingMode: facingMode,
-            width: { ideal: 640 },
-            height: { ideal: 480 }
+            width: { ideal: 224 },
+            height: { ideal: 224 }
           }
         };
         
@@ -293,6 +292,41 @@
       facingMode = facingMode === 'user' ? 'environment' : 'user';
       startCamera();
     }
+
+    function dummyImage() {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      canvas.width = 224;
+      canvas.height = 224;
+      const context = canvas.getContext('2d');
+      const img = new Image();
+      img.src = '/static/images/dummy.jpg';
+      img.onload = function() {
+        context.drawImage(img, 0, 0, canvas.width, canvas.height);
+        // 轉換為 base64，降低品質以加快傳輸
+        const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+        if (!base64Data) {
+          showStatus("❌ 無法擷取影像", 'error');
+          return;
+        }
+
+        // ✅ base64Data 可送出或處理
+        console.log(base64Data);
+        setProcessing(true);
+        document.getElementById('result').textContent = "🔄 正在分析影像...";
+        
+        // 檢查 socket 連線狀態
+        if (!socket || !socket.connected) {
+          showStatus("❌ 與伺服器連線中斷，請重新整理頁面", 'error');
+          setProcessing(false);
+          return;
+        }
+        
+        // 傳送影像到伺服器
+        socket.emit('image', { image_base64: base64Data });
+      };
+    }
     
     // 拍照並傳送
     function captureAndSend() {
@@ -316,20 +350,24 @@
         if (video.videoWidth === 0 || video.videoHeight === 0) {
           showStatus("❌ 相機尚未準備好，請稍候再試", 'error');
           return;
+        } else {
+          
         }
-        
+
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         
         // 轉換為 base64，降低品質以加快傳輸
         const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
-        
+
         if (!base64Data) {
           showStatus("❌ 無法擷取影像", 'error');
           return;
         }
-        
+
+        // ✅ base64Data 可送出或處理
+        console.log(base64Data);
         setProcessing(true);
         document.getElementById('result').textContent = "🔄 正在分析影像...";
         
@@ -342,7 +380,6 @@
         
         // 傳送影像到伺服器
         socket.emit('image', { image_base64: base64Data });
-        
       } catch (err) {
         console.error("拍照失敗:", err);
         showStatus(`❌ 拍照失敗: ${err.message || '未知錯誤'}`, 'error');

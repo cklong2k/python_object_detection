@@ -7,6 +7,7 @@ import eventlet
 import os
 from ultralytics import YOLO
 import torch
+from datetime import datetime
 
 eventlet.monkey_patch()  # 必要：讓 OpenCV 在 eventlet 環境中正常執行
 
@@ -114,8 +115,22 @@ def handle_image(data):
 
         print(f"收到影像，尺寸: {image.shape}")
 
+        # save image
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        image_path = f"static/images/{timestamp}.jpg"
+        cv2.imwrite(image_path, image)
+
         # 執行 YOLOv8 物件識別
         results = yolov8_object_detection(image)
+
+        # draw bounding boxes
+        for result in results:
+            x, y, w, h = result["bbox"]
+            cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(image, result["label"], (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+        # save image
+        cv2.imwrite(image_path, image)
         
         print(f"🔍 檢測到 {len(results)} 個物件")
 
