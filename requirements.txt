@@ -1,17 +1,19 @@
 # Flask 和 WebSocket
-flask==2.3.3
-flask-socketio==5.3.6
-eventlet==0.33.3
+flask
+flask-socketio
+eventlet
 
 # 電腦視覺
-opencv-python==4.8.1.78
-numpy==1.24.3
+opencv-python
+numpy
 
 # YOLOv8 - 使用兼容版本
-ultralytics==8.0.196
-torch>=1.13.0,<2.6.0  # 避免 weights_only 問題
-torchvision>=0.14.0,<0.19.0
+ultralytics
+torch==2.7.1
+torchvision
+transformers
 
 # 其他依賴
-pillow==10.0.1
+pillow
 pyyaml
+qdrant_client

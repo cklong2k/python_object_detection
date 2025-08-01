@@ -1,2 +1,5 @@
 /venv
 yolov8n.pt
+/__pycache__
+/.ipynb_checkpoints
+/static/images

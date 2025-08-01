@@ -7,13 +7,31 @@ import eventlet
 import os
 from ultralytics import YOLO
 import torch
+import clip
 from datetime import datetime
+import qdrant
+from PIL import Image
+import uuid
 
 eventlet.monkey_patch()  # 必要：讓 OpenCV 在 eventlet 環境中正常執行
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here'  # 添加密鑰
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')  # 明確指定 async_mode
+
+# 初始化 Qdrant 客戶端
+qdrant_client = qdrant.QdrantCRUD(host="localhost", port=6333, collection_name="test_collection")
+
+# 確保 Qdrant collection 已存在
+try:
+    qdrant_client.create_collection(vector_size=512, distance="Cosine")
+    print("✅ Qdrant collection 已成功創建或已存在")
+except Exception as e:
+    print(f"❌ 創建 Qdrant collection 時發生錯誤: {str(e)}")
+    exit(1)
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+clip_model, preprocess = clip.load("ViT-B/32", device=device)  # 1024 維輸出
 
 # 載入 YOLOv8 模型
 print("🔄 正在載入 YOLOv8 模型...")
@@ -76,7 +94,7 @@ def yolov8_object_detection(image):
 # 轉成 1024維向量資料
 def base64_to_vector(base64_image):
     try:
-        # 解碼 Base64 圖像，並轉成 1024維向量資料
+        # 解碼 base64
         img_data = base64.b64decode(base64_image)
         np_arr = np.frombuffer(img_data, np.uint8)
         image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -84,13 +102,23 @@ def base64_to_vector(base64_image):
         if image is None:
             return None
         
-        # 將圖像轉換為 1024維向量資料
-        vector = image.flatten()
-        return vector.tolist()
+        # 轉換成 PIL 圖片
+        pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))  # OpenCV 是 BGR，PIL 是 RGB
+
+        # 預處理
+        input_tensor = preprocess(pil_img).unsqueeze(0).to(device)
+
+        # 推論並取得 512 維向量
+        with torch.no_grad():
+            embedding = clip_model.encode_image(input_tensor)
+            embedding /= embedding.norm(dim=-1, keepdim=True)  # 向量正規化
+
+        return embedding.squeeze(0).cpu().tolist()  # 回傳為 Python list
         
     except Exception as e:
         print(f"轉換錯誤: {str(e)}")
         return None
+
 
 @app.route('/')
 def index():
@@ -185,6 +213,46 @@ def handle_image(data):
         print(f"處理影像時發生錯誤: {str(e)}")
         emit('error', {'error': f'伺服器錯誤：{str(e)}'})
 
+@socketio.on('searchVector')
+def handle_search_vector(data):
+    try:
+        if data.get("vector") is None:
+            emit('error', {'error': '影像轉換為向量時發生錯誤'})
+            return
+        print(f"影像轉換為向量成功，向量長度: {len(data.get('vector'))}")
+
+        # 在 Qdrant 中搜尋相似向量
+        vector = data.get("vector")
+        # print(f"🔄 正在搜尋向量: {vector}")
+        results = qdrant_client.search(
+                vector=vector,
+                top=5
+            )
+        
+        # 將 ScoredPoint 轉為可 JSON 的 dict
+        results_json = [
+            {
+                "id": r.id,
+                "score": r.score,
+                "payload": r.payload,  # 確保 payload 是 dict
+                "vector": r.vector if hasattr(r, "vector") else None  # 可選
+            }
+            for r in results
+        ]
+
+        print(f"搜尋到 {len(results)} 個相似向量")
+        print(f"第一個搜尋結果: {results[0].payload['image_path']}")
+
+        # 回傳搜尋結果給前端
+        emit('search_result', {
+            'image': results_json,
+            'status': 'success'
+        })
+
+    except Exception as e:
+        print(f"搜尋向量時發生錯誤: {str(e)}")
+        emit('error', {'error': f'伺服器錯誤：{str(e)}'})
+
 @socketio.on('createVector')
 def handle_create_vector(data):
     try:
@@ -228,8 +296,12 @@ def handle_create_vector(data):
 
         print(f"影像轉換為向量成功，向量長度: {len(vector)}")
 
+        # 儲存向量到 Qdrant
+        point_id = str(uuid.uuid4())  # 使用時間戳和 UUID 作為唯一 ID
+        qdrant_client.insert_point(point_id, vector, payload={"timestamp": timestamp, "image_path": image_path})
+
         # 回傳結果給前端
-        emit('result', {
+        emit('vector', {
             'status': 'success',
             'vector': vector
         })
